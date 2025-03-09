@@ -2,6 +2,8 @@ import socket
 import paramiko
 from colorama import Fore, init
 import time
+import os
+import sys
 
 #start colorama
 init()
@@ -38,6 +40,19 @@ def wait_for_eof(channel, timeout=5):
             channel.channel.close()
             break
 
+def sftp_file_transaction(ip, remote_path, local_path, get=True):
+    transport = paramiko.Transport(ip)
+    transport.connect(username=ROBOT_USERNAME, password=ROBOT_PASSWORD)
+    sftp = paramiko.SFTPClient.from_transport(transport)
+
+    if get:
+        sftp.get(remotepath=remote_path, localpath=local_path)
+    else:
+        sftp.put(localpath=local_path, remotepath=remote_path)
+
+    sftp.close()
+    transport.close()
+
 def main():
     #load mac addresses from disk
     load_macs()
@@ -53,6 +68,7 @@ def main():
     ip = socket.gethostbyname(socket.gethostname())
     if ip == DIRECT_CONNECTION_LOCAL_IP:
         print(Fore.CYAN + "DIRECT MODE: " + Fore.RESET + " Attempting SSH...   ", end='')
+        sys.stdout.flush()
 
         # SSH into robot directly
         try:
@@ -60,9 +76,12 @@ def main():
             print(Fore.GREEN + "Connected!")
 
             #check for root access
+            print(Fore.RESET + "Checking for sudo access...   ", end='')
+            sys.stdout.flush()
             _, std_out, std_err = ssh.exec_command('sudo su root')
             wait_for_eof(std_out)
             wait_for_eof(std_err)
+            print(Fore.GREEN + 'Done')
 
             if len(std_out.read()) == 0 and len(std_err.read()) == 0:
                 # we do have root access
@@ -70,6 +89,7 @@ def main():
                 
                 #remove proxies just in case
                 print(Fore.RESET + 'Removing proxies and protecting device...   ', end='')
+                sys.stdout.flush()
                 ssh.exec_command('rm /opt/sockproxy/proxy_list.json')
                 ssh.exec_command('systemctl disable sockproxy.service')
                 ssh.exec_command('route add 62.210.208.47 gw 127.0.0.1 lo')
@@ -81,44 +101,53 @@ def main():
 
                 #name robot
             else:
-                pass
-            # do not have root access, fix that
-            _, std_out, _ = ssh.exec_command('cat /etc/rc.local')
-            wait_for_eof(std_out)
+                # do not have root access, fix that
+                temp_file_name = "temp_local"
+                remote_file_name = "/etc/rc.local"
+                sftp_file_transaction(DIRECT_CONNECTION_IP, remote_file_name, temp_file_name) #fetch remote rc.local file
 
-            new_line = 'chmod 4755 /usr/bin/sudo\n' #line to be written to file to get sudo access
-            end_line = 'exit 0\n' #last line in the file, used as reference for line write location
+                new_line = 'chmod 4755 /usr/bin/sudo\n' #line to be written to file to get sudo access
+                end_line = 'exit 0\n' #last line in the file, used as reference for line write location
 
-            file_contents = []
-            for line in std_out:
-                file_contents.append(line)
+                file_contents = []
+                with open(temp_file_name, "r") as f:
+                    for line in f.readlines():
+                        file_contents.append(line)
 
-            #file already has the line we need, request user to reboot the robot
-            if new_line in file_contents:
-                print(Fore.YELLOW + "NO ROOT ACCESS! Modifications not needed. Please reboot robot and rerun this script")
-            else:
-                try:
-                    print(Fore.YELLOW + "NO ROOT ACCESS! Modifying files...   ", end='')
-                    #write new file
-                    end_line_old_index = file_contents.index(end_line)
-                    file_contents.append(end_line) #make sure file ends with this line
-                    file_contents[end_line_old_index] = new_line #replace the old end-of-file location with the new line
+                #file already has the line we need, request user to reboot the robot
+                if new_line in file_contents:
+                    print(Fore.YELLOW + "NO ROOT ACCESS! Modifications not needed. Please reboot robot and rerun this script")
+                else:
+                    try:
+                        print(Fore.YELLOW + "NO ROOT ACCESS! Modifying files...   ", end='')
+                        sys.stdout.flush()
 
-                    _, o, e = ssh.exec_command(f'echo {''.join(file_contents)} >> /etc/rc.local')
-                    wait_for_eof(o)
-                    wait_for_eof(e)
-                    print(o.read())
-                    print(e.read())
+                        #make edits to file contents in memory
+                        end_line_old_index = file_contents.index(end_line)
+                        file_contents.append(end_line) #make sure file ends with this line
+                        file_contents[end_line_old_index] = new_line #replace the old end-of-file location with the new line
 
-                    print(Fore.GREEN + "Done")
-                except:
-                    print(Fore.RED + "ERROR: Problem writing to robot! Dumping file contents for debugging:")
-                    print("-"*50)
-                    for line in file_contents:
-                        print(line.rstrip())
-                    print("-"*50)
-        except:
-            print()
+                        #write file contents to local file
+                        with open(temp_file_name, "w", newline='\n') as f:
+                            for line in file_contents:
+                                f.write(line)
+
+                        #upload local file to robot
+                        sftp_file_transaction(DIRECT_CONNECTION_IP, remote_file_name, temp_file_name, get=False)
+
+                        print(Fore.GREEN + "Done")
+                        print(Fore.YELLOW + "Please reboot robot")
+                    except Exception as e:
+                        print()
+                        print(Fore.RED + "ERROR: Problem writing to robot! Dumping file contents for debugging:")
+                        print("-"*50)
+                        for line in file_contents:
+                            print(line.rstrip())
+                        print("-"*50)
+
+                os.remove(temp_file_name)
+        except Exception as e:
+            print(e)
             print(Fore.RED + "SSH connection failed! Exiting...")
             ssh.close()
             return
