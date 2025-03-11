@@ -18,9 +18,6 @@ DIRECT_CONNECTION_LOCAL_IP = '10.42.0.124'
 ROBOT_USERNAME = 'linaro'
 ROBOT_PASSWORD = 'linaro'
 
-ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.MissingHostKeyPolicy())
-
 #read values from mac_addresses file into dictionary mapping robot names to mac addresses
 def load_macs():
     with open('mac_addresses.txt', 'r') as f:
@@ -29,6 +26,11 @@ def load_macs():
             name = line.split('-')[0]
             mac = line.split('-')[1]
             robot_macs_dict[name] = mac
+
+def dump_macs():
+    with open('mac_addresses.txt', 'w') as f:
+        for name in robot_macs_dict.keys():
+            f.write(f'{name}-{robot_macs_dict[name]}')
 
 def wait_for_eof(channel, timeout=5):
     #fix for paramiko eof problem described here: https://github.com/paramiko/paramiko/issues/109
@@ -53,13 +55,27 @@ def sftp_file_transaction(ip, remote_path, local_path, get=True):
     sftp.close()
     transport.close()
 
+#read from network_conf.txt file
+wifi_info = {}
+try:
+    with open('network_conf.txt', 'r') as f:
+        for line in f:
+            line = line.rstrip()
+            segs = line.split('=')
+            wifi_info[segs[0]] = segs[1]
+except:
+    print(Fore.RED + "Unable to open network configuration file!")
+
 def main():
     #load mac addresses from disk
     load_macs()
 
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.MissingHostKeyPolicy())
+
     #print welcome/start message
     print(Fore.RESET + "--------------------------------------")
-    print(Fore.CYAN + "Moorebot setup tool")
+    print(Fore.MAGENTA + "Moorebot setup tool")
     print(Fore.RESET + "--------------------------------------")
     print("")
     print("Detecting connection mode...")
@@ -79,8 +95,8 @@ def main():
             print(Fore.RESET + "Checking for sudo access...   ", end='')
             sys.stdout.flush()
             _, std_out, std_err = ssh.exec_command('sudo su root')
-            wait_for_eof(std_out)
-            wait_for_eof(std_err)
+            wait_for_eof(std_out, 2)
+            wait_for_eof(std_err, 2)
             print(Fore.GREEN + 'Done')
 
             if len(std_out.read()) == 0 and len(std_err.read()) == 0:
@@ -98,8 +114,60 @@ def main():
                 print(Fore.GREEN + 'Done')
 
                 #get mac address
+                print(Fore.RESET + 'Detecting robot name...   ', end='')
+                sys.stdout.flush()
+                _, std_out, _ = ssh.exec_command('sudo ifconfig | grep ether')
+                wait_for_eof(std_out)
+                mac = std_out.readlines()[0].strip()[6:23]
 
-                #name robot
+                robot_name = ''
+                for name in robot_macs_dict.keys():
+                    if robot_macs_dict[name] == mac:
+                        #robot found
+                        robot_name = name
+                        print(Fore.GREEN + f'{name} found!')
+                
+                #name robot if a new one is found
+                if robot_name == '':
+                    robot_name = input(Fore.YELLOW + 'New robot detected. Enter name: ')
+                    robot_macs_dict[robot_name] = mac
+                    dump_macs() #save new mac address to file
+
+                #save name to file
+                print(Fore.RESET + 'Ensuring correct WiFi name...   ', end='')
+                sys.stdout.flush()
+
+                _, std_out, _ = ssh.exec_command('cat /etc/hostapd/hostapd.conf')
+                wait_for_eof(std_out)
+
+                #read and edit file contents
+                file_contents = [line for line in std_out.readlines()]
+                if len(file_contents) == 0:
+                    raise Exception('Error reading hostapd file contents')
+
+                file_contents[3] = f'ssid={robot_name}\n'
+                new_file_str = ''.join(file_contents)
+                #write to remote
+                _, std_out, std_err = ssh.exec_command(f'echo "{new_file_str}" | sudo tee /etc/hostapd/hostapd.conf')
+                wait_for_eof(std_out)
+                wait_for_eof(std_err)
+                print(Fore.GREEN + 'Done')
+
+                #give robot access to local network
+                print(Fore.RESET + 'Adding wifi information...   ', end='')
+                sys.stdout.flush()
+
+                if len(wifi_info) == 0:
+                    print(Fore.RED + 'Failed')
+                else:
+                    wifi_info_str = f"{wifi_info['ssid']}\n{wifi_info['pswd']}"
+                    _, std_out, std_err = ssh.exec_command(f'echo "{wifi_info_str}" | sudo tee /var/roller_eye/config/wifi')
+                    wait_for_eof(std_out)
+                    wait_for_eof(std_err)
+                    print(Fore.GREEN + 'Done')
+
+                print(Fore.CYAN + 'Config complete, shutting down robot for reboot.')
+                ssh.exec_command('sudo reboot')
             else:
                 # do not have root access, fix that
                 temp_file_name = "temp_local"
@@ -147,7 +215,7 @@ def main():
 
                 os.remove(temp_file_name)
         except Exception as e:
-            print(e)
+            print(Fore.RED + str(e))
             print(Fore.RED + "SSH connection failed! Exiting...")
             ssh.close()
             return
