@@ -231,7 +231,6 @@ def main():
     print(Fore.MAGENTA + "Moorebot setup tool")
     print(Fore.RESET + "--------------------------------------")
     print("")
-    print("Detecting connection mode...")
 
     # Check to see if connected to robot directly
     ip = socket.gethostbyname(socket.gethostname())
@@ -253,24 +252,24 @@ def main():
         else:
             print(Fore.GREEN + f'Found {len(netscanner.found_ips)} bot(s)!')
 
-        for bot in netscanner.found_ips.keys():
-            x = threading.Thread(target=run_setup, args=(netscanner.found_ips[bot], False, False))
-            x.start()
+            for bot in netscanner.found_ips.keys():
+                x = threading.Thread(target=run_setup, args=(netscanner.found_ips[bot], False, False))
+                x.start()
 
-            num_dots = 0
-            while x.is_alive():
-                print(Fore.RESET + f'Configuring {bot}{'.'*num_dots}   ', end='\r')
-                num_dots = num_dots + 1 if num_dots <= 2 else 0
+                num_dots = 0
+                while x.is_alive():
+                    print(Fore.RESET + f'Configuring {bot}{'.'*num_dots}   ', end='\r')
+                    num_dots = num_dots + 1 if num_dots <= 2 else 0
 
-                time.sleep(0.5)
+                    time.sleep(0.5)
 
-            x.join()
-            if success_flag:
-                print(Fore.RESET + f'Configuring {bot}...   ' + Fore.GREEN + 'Success!')
-            else:
-                print(Fore.RESET + f'Configuring {bot}...   ' + Fore.RED + 'Failed!')
+                x.join()
+                if success_flag:
+                    print(Fore.RESET + f'Configuring {bot}...   ' + Fore.GREEN + 'Success!')
+                else:
+                    print(Fore.RESET + f'Configuring {bot}...   ' + Fore.RED + 'Failed!')
 
-        print(Fore.CYAN + 'Done. Please reboot robots to apply changes.')
+            print(Fore.CYAN + 'Done. Please reboot robots to apply changes.')
 
     print(Fore.RESET, end='')
 
