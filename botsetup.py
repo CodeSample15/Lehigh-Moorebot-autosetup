@@ -4,6 +4,7 @@ from colorama import Fore, init
 import time
 import os
 import sys
+import threading
 
 #start colorama
 init()
@@ -17,6 +18,9 @@ DIRECT_CONNECTION_LOCAL_IP = '10.42.0.124'
 #for ssh login
 ROBOT_USERNAME = 'linaro'
 ROBOT_PASSWORD = 'linaro'
+
+#for threading (set to true when config was successful)
+success_flag = False
 
 #read values from mac_addresses file into dictionary mapping robot names to mac addresses
 def load_macs():
@@ -72,7 +76,9 @@ def load_wifi_config():
     except:
         print(Fore.RED + "Unable to open network configuration file!")
 
-def run_setup(ip, verbose=True):
+def run_setup(ip, set_wifi=True, verbose=True):
+    global success_flag
+
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.MissingHostKeyPolicy())
 
@@ -143,17 +149,18 @@ def run_setup(ip, verbose=True):
             print_conditional(Fore.GREEN + 'Done', output=verbose)
 
             #give robot access to local network
-            print_conditional(Fore.RESET + 'Adding wifi information...   ', end='', output=verbose)
-            sys.stdout.flush()
+            if set_wifi:
+                print_conditional(Fore.RESET + 'Adding wifi information...   ', end='', output=verbose)
+                sys.stdout.flush()
 
-            if len(wifi_info) == 0:
-                print_conditional(Fore.RED + 'Failed (No network_conf.txt)', output=verbose)
-            else:
-                wifi_info_str = f"{wifi_info['ssid']}\n{wifi_info['pswd']}"
-                _, std_out, std_err = ssh.exec_command(f'echo "{wifi_info_str}" | sudo tee /var/roller_eye/config/wifi')
-                wait_for_eof(std_out)
-                wait_for_eof(std_err)
-                print(Fore.GREEN + 'Done')
+                if len(wifi_info) == 0:
+                    print_conditional(Fore.RED + 'Failed (No network_conf.txt)', output=verbose)
+                else:
+                    wifi_info_str = f"{wifi_info['ssid']}\n{wifi_info['pswd']}"
+                    _, std_out, std_err = ssh.exec_command(f'echo "{wifi_info_str}" | sudo tee /var/roller_eye/config/wifi')
+                    wait_for_eof(std_out)
+                    wait_for_eof(std_err)
+                    print(Fore.GREEN + 'Done')
 
             print_conditional(Fore.CYAN + 'Config complete. Reboot robot to apply changes', output=verbose)
             #ssh.exec_command('sudo reboot')
@@ -202,14 +209,18 @@ def run_setup(ip, verbose=True):
                         print_conditional(line.rstrip(), output=verbose)
                     print_conditional("-"*50, output=verbose)
 
+                    success_flag = False
+
             os.remove(temp_file_name)
     except Exception as e:
         print_conditional(Fore.RED + str(e), output=verbose)
         print_conditional(Fore.RED + "SSH connection failed! Exiting...", output=verbose)
         ssh.close()
-        return
+
+        success_flag = False
     
     ssh.close()
+    success_flag = True
 
 def main():
     load_macs() #load mac addresses from disk
@@ -234,12 +245,37 @@ def main():
         #robot not directly connected, search wifi
         print(Fore.CYAN + "INDIRECT MODE:" + Fore.RESET + " Starting network scan...")
 
-        #get ip from scanner
+        #get ips from scanner
+        netscanner.scan()
 
-        #spin up new thread for found ip with verbose off for better printing
-        #run_setup(ip, verbose=False)
+        if len(netscanner.found_ips) == 0:
+            print(Fore.YELLOW + 'No bots found on network.')
+        else:
+            print(Fore.GREEN + f'Found {len(netscanner.found_ips)} bot(s)!')
+
+        for bot in netscanner.found_ips.keys():
+            x = threading.Thread(target=run_setup, args=(netscanner.found_ips[bot], False, False))
+            x.start()
+
+            num_dots = 0
+            while x.is_alive():
+                print(Fore.RESET + f'Configuring {bot}{'.'*num_dots}   ', end='\r')
+                num_dots = num_dots + 1 if num_dots <= 2 else 0
+
+                time.sleep(0.5)
+
+            x.join()
+            if success_flag:
+                print(Fore.RESET + f'Configuring {bot}...   ' + Fore.GREEN + 'Success!')
+            else:
+                print(Fore.RESET + f'Configuring {bot}...   ' + Fore.RED + 'Failed!')
+
+        print(Fore.CYAN + 'Done. Please reboot robots to apply changes.')
 
     print(Fore.RESET, end='')
+
+#only import once everything is initialized (prevents error with circular import)
+import netscanner
 
 if __name__ == '__main__':
     main()
