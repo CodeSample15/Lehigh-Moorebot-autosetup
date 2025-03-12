@@ -55,23 +55,165 @@ def sftp_file_transaction(ip, remote_path, local_path, get=True):
     sftp.close()
     transport.close()
 
+def print_conditional(string='', end='\n', output=True):
+    if output: #makes it so that there doesn't need to be a bunch of if statements when logging is turned off
+        print(string, end=end)
+
 #read from network_conf.txt file
 wifi_info = {}
-try:
-    with open('network_conf.txt', 'r') as f:
-        for line in f:
-            line = line.rstrip()
-            segs = line.split('=')
-            wifi_info[segs[0]] = segs[1]
-except:
-    print(Fore.RED + "Unable to open network configuration file!")
+def load_wifi_config():
+    global wifi_info
+    try:
+        with open('network_conf.txt', 'r') as f:
+            for line in f:
+                line = line.rstrip()
+                segs = line.split('=')
+                wifi_info[segs[0]] = segs[1]
+    except:
+        print(Fore.RED + "Unable to open network configuration file!")
 
-def main():
-    #load mac addresses from disk
-    load_macs()
-
+def run_setup(ip, verbose=True):
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.MissingHostKeyPolicy())
+
+    try:
+        ssh.connect(ip, 22, username=ROBOT_USERNAME, password=ROBOT_PASSWORD)
+        print_conditional(Fore.GREEN + "Connected!", output=verbose)
+
+        #check for root access
+        print_conditional(Fore.RESET + "Checking for sudo access...   ", end='', output=verbose)
+        sys.stdout.flush()
+        _, std_out, std_err = ssh.exec_command('sudo su root')
+        wait_for_eof(std_out, 2)
+        wait_for_eof(std_err, 2)
+        print_conditional(Fore.GREEN + 'Done', output=verbose)
+
+        if len(std_out.read()) == 0 and len(std_err.read()) == 0:
+            # we do have root access
+            # *Hacker voice*: I'm in
+            
+            #remove proxies just in case
+            print_conditional(Fore.RESET + 'Removing proxies and protecting device...   ', end='', output=verbose)
+            sys.stdout.flush()
+            ssh.exec_command('rm /opt/sockproxy/proxy_list.json')
+            ssh.exec_command('systemctl disable sockproxy.service')
+            ssh.exec_command('route add 62.210.208.47 gw 127.0.0.1 lo')
+            ssh.exec_command('route add 45.35.33.24 gw 127.0.0.1 lo')
+            ssh.exec_command('route add 118.107.244.35 gw 127.0.0.1 lo')
+            print_conditional(Fore.GREEN + 'Done', output=verbose)
+
+            #get mac address
+            print_conditional(Fore.RESET + 'Detecting robot name...   ', end='', output=verbose)
+            sys.stdout.flush()
+            _, std_out, _ = ssh.exec_command('sudo ifconfig | grep ether')
+            wait_for_eof(std_out)
+            mac = std_out.readlines()[0].strip()[6:23]
+
+            robot_name = ''
+            for name in robot_macs_dict.keys():
+                if robot_macs_dict[name] == mac:
+                    #robot found
+                    robot_name = name
+                    print_conditional(Fore.GREEN + f'{name} found!', output=verbose)
+            
+            #name robot if a new one is found
+            if robot_name == '':
+                robot_name = input(Fore.YELLOW + 'New robot detected. Enter name: ')
+                robot_macs_dict[robot_name] = mac
+                dump_macs() #save new mac address to file
+
+            #save name to file
+            print_conditional(Fore.RESET + 'Ensuring correct WiFi name...   ', end='', output=verbose)
+            sys.stdout.flush()
+
+            _, std_out, _ = ssh.exec_command('cat /etc/hostapd/hostapd.conf')
+            wait_for_eof(std_out)
+
+            #read and edit file contents
+            file_contents = [line for line in std_out.readlines()]
+            if len(file_contents) == 0:
+                raise Exception('Error reading hostapd file contents')
+
+            file_contents[3] = f'ssid={robot_name}\n'
+            new_file_str = ''.join(file_contents)
+            #write to remote
+            _, std_out, std_err = ssh.exec_command(f'echo "{new_file_str}" | sudo tee /etc/hostapd/hostapd.conf')
+            wait_for_eof(std_out)
+            wait_for_eof(std_err)
+            print_conditional(Fore.GREEN + 'Done', output=verbose)
+
+            #give robot access to local network
+            print_conditional(Fore.RESET + 'Adding wifi information...   ', end='', output=verbose)
+            sys.stdout.flush()
+
+            if len(wifi_info) == 0:
+                print_conditional(Fore.RED + 'Failed (No network_conf.txt)', output=verbose)
+            else:
+                wifi_info_str = f"{wifi_info['ssid']}\n{wifi_info['pswd']}"
+                _, std_out, std_err = ssh.exec_command(f'echo "{wifi_info_str}" | sudo tee /var/roller_eye/config/wifi')
+                wait_for_eof(std_out)
+                wait_for_eof(std_err)
+                print(Fore.GREEN + 'Done')
+
+            print_conditional(Fore.CYAN + 'Config complete. Reboot robot to apply changes', output=verbose)
+            #ssh.exec_command('sudo reboot')
+        else:
+            # do not have root access, fix that
+            temp_file_name = "temp_local"
+            remote_file_name = "/etc/rc.local"
+            sftp_file_transaction(DIRECT_CONNECTION_IP, remote_file_name, temp_file_name) #fetch remote rc.local file
+
+            new_line = 'chmod 4755 /usr/bin/sudo\n' #line to be written to file to get sudo access
+            end_line = 'exit 0\n' #last line in the file, used as reference for line write location
+
+            file_contents = []
+            with open(temp_file_name, "r") as f:
+                for line in f.readlines():
+                    file_contents.append(line)
+
+            #file already has the line we need, request user to reboot the robot
+            if new_line in file_contents:
+                print_conditional(Fore.YELLOW + "NO ROOT ACCESS! Modifications not needed. Please reboot robot and rerun this script", output=verbose)
+            else:
+                try:
+                    print_conditional(Fore.YELLOW + "NO ROOT ACCESS! Modifying files...   ", end='', output=verbose)
+                    sys.stdout.flush()
+
+                    #make edits to file contents in memory
+                    end_line_old_index = file_contents.index(end_line)
+                    file_contents.append(end_line) #make sure file ends with this line
+                    file_contents[end_line_old_index] = new_line #replace the old end-of-file location with the new line
+
+                    #write file contents to local file
+                    with open(temp_file_name, "w", newline='\n') as f:
+                        for line in file_contents:
+                            f.write(line)
+
+                    #upload local file to robot
+                    sftp_file_transaction(DIRECT_CONNECTION_IP, remote_file_name, temp_file_name, get=False)
+
+                    print_conditional(Fore.GREEN + "Done", output=verbose)
+                    print_conditional(Fore.YELLOW + "Please reboot robot", output=verbose)
+                except Exception as e:
+                    print_conditional(output=verbose)
+                    print_conditional(Fore.RED + "ERROR: Problem writing to robot! Dumping file contents for debugging:", output=verbose)
+                    print_conditional("-"*50, output=verbose)
+                    for line in file_contents:
+                        print_conditional(line.rstrip(), output=verbose)
+                    print_conditional("-"*50, output=verbose)
+
+            os.remove(temp_file_name)
+    except Exception as e:
+        print_conditional(Fore.RED + str(e), output=verbose)
+        print_conditional(Fore.RED + "SSH connection failed! Exiting...", output=verbose)
+        ssh.close()
+        return
+    
+    ssh.close()
+
+def main():
+    load_macs() #load mac addresses from disk
+    load_wifi_config() #load 
 
     #print welcome/start message
     print(Fore.RESET + "--------------------------------------")
@@ -87,144 +229,16 @@ def main():
         sys.stdout.flush()
 
         # SSH into robot directly
-        try:
-            ssh.connect(DIRECT_CONNECTION_IP, 22, username=ROBOT_USERNAME, password=ROBOT_PASSWORD)
-            print(Fore.GREEN + "Connected!")
-
-            #check for root access
-            print(Fore.RESET + "Checking for sudo access...   ", end='')
-            sys.stdout.flush()
-            _, std_out, std_err = ssh.exec_command('sudo su root')
-            wait_for_eof(std_out, 2)
-            wait_for_eof(std_err, 2)
-            print(Fore.GREEN + 'Done')
-
-            if len(std_out.read()) == 0 and len(std_err.read()) == 0:
-                # we do have root access
-                # *Hacker voice*: I'm in
-                
-                #remove proxies just in case
-                print(Fore.RESET + 'Removing proxies and protecting device...   ', end='')
-                sys.stdout.flush()
-                ssh.exec_command('rm /opt/sockproxy/proxy_list.json')
-                ssh.exec_command('systemctl disable sockproxy.service')
-                ssh.exec_command('route add 62.210.208.47 gw 127.0.0.1 lo')
-                ssh.exec_command('route add 45.35.33.24 gw 127.0.0.1 lo')
-                ssh.exec_command('route add 118.107.244.35 gw 127.0.0.1 lo')
-                print(Fore.GREEN + 'Done')
-
-                #get mac address
-                print(Fore.RESET + 'Detecting robot name...   ', end='')
-                sys.stdout.flush()
-                _, std_out, _ = ssh.exec_command('sudo ifconfig | grep ether')
-                wait_for_eof(std_out)
-                mac = std_out.readlines()[0].strip()[6:23]
-
-                robot_name = ''
-                for name in robot_macs_dict.keys():
-                    if robot_macs_dict[name] == mac:
-                        #robot found
-                        robot_name = name
-                        print(Fore.GREEN + f'{name} found!')
-                
-                #name robot if a new one is found
-                if robot_name == '':
-                    robot_name = input(Fore.YELLOW + 'New robot detected. Enter name: ')
-                    robot_macs_dict[robot_name] = mac
-                    dump_macs() #save new mac address to file
-
-                #save name to file
-                print(Fore.RESET + 'Ensuring correct WiFi name...   ', end='')
-                sys.stdout.flush()
-
-                _, std_out, _ = ssh.exec_command('cat /etc/hostapd/hostapd.conf')
-                wait_for_eof(std_out)
-
-                #read and edit file contents
-                file_contents = [line for line in std_out.readlines()]
-                if len(file_contents) == 0:
-                    raise Exception('Error reading hostapd file contents')
-
-                file_contents[3] = f'ssid={robot_name}\n'
-                new_file_str = ''.join(file_contents)
-                #write to remote
-                _, std_out, std_err = ssh.exec_command(f'echo "{new_file_str}" | sudo tee /etc/hostapd/hostapd.conf')
-                wait_for_eof(std_out)
-                wait_for_eof(std_err)
-                print(Fore.GREEN + 'Done')
-
-                #give robot access to local network
-                print(Fore.RESET + 'Adding wifi information...   ', end='')
-                sys.stdout.flush()
-
-                if len(wifi_info) == 0:
-                    print(Fore.RED + 'Failed')
-                else:
-                    wifi_info_str = f"{wifi_info['ssid']}\n{wifi_info['pswd']}"
-                    _, std_out, std_err = ssh.exec_command(f'echo "{wifi_info_str}" | sudo tee /var/roller_eye/config/wifi')
-                    wait_for_eof(std_out)
-                    wait_for_eof(std_err)
-                    print(Fore.GREEN + 'Done')
-
-                print(Fore.CYAN + 'Config complete, shutting down robot for reboot.')
-                ssh.exec_command('sudo reboot')
-            else:
-                # do not have root access, fix that
-                temp_file_name = "temp_local"
-                remote_file_name = "/etc/rc.local"
-                sftp_file_transaction(DIRECT_CONNECTION_IP, remote_file_name, temp_file_name) #fetch remote rc.local file
-
-                new_line = 'chmod 4755 /usr/bin/sudo\n' #line to be written to file to get sudo access
-                end_line = 'exit 0\n' #last line in the file, used as reference for line write location
-
-                file_contents = []
-                with open(temp_file_name, "r") as f:
-                    for line in f.readlines():
-                        file_contents.append(line)
-
-                #file already has the line we need, request user to reboot the robot
-                if new_line in file_contents:
-                    print(Fore.YELLOW + "NO ROOT ACCESS! Modifications not needed. Please reboot robot and rerun this script")
-                else:
-                    try:
-                        print(Fore.YELLOW + "NO ROOT ACCESS! Modifying files...   ", end='')
-                        sys.stdout.flush()
-
-                        #make edits to file contents in memory
-                        end_line_old_index = file_contents.index(end_line)
-                        file_contents.append(end_line) #make sure file ends with this line
-                        file_contents[end_line_old_index] = new_line #replace the old end-of-file location with the new line
-
-                        #write file contents to local file
-                        with open(temp_file_name, "w", newline='\n') as f:
-                            for line in file_contents:
-                                f.write(line)
-
-                        #upload local file to robot
-                        sftp_file_transaction(DIRECT_CONNECTION_IP, remote_file_name, temp_file_name, get=False)
-
-                        print(Fore.GREEN + "Done")
-                        print(Fore.YELLOW + "Please reboot robot")
-                    except Exception as e:
-                        print()
-                        print(Fore.RED + "ERROR: Problem writing to robot! Dumping file contents for debugging:")
-                        print("-"*50)
-                        for line in file_contents:
-                            print(line.rstrip())
-                        print("-"*50)
-
-                os.remove(temp_file_name)
-        except Exception as e:
-            print(Fore.RED + str(e))
-            print(Fore.RED + "SSH connection failed! Exiting...")
-            ssh.close()
-            return
+        run_setup(DIRECT_CONNECTION_IP, verbose=True)
     else:
         #robot not directly connected, search wifi
         print(Fore.CYAN + "INDIRECT MODE:" + Fore.RESET + " Starting network scan...")
 
-    #clean up
-    ssh.close()
+        #get ip from scanner
+
+        #spin up new thread for found ip with verbose off for better printing
+        #run_setup(ip, verbose=False)
+
     print(Fore.RESET, end='')
 
 if __name__ == '__main__':
