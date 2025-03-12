@@ -44,7 +44,6 @@ def scan():
         new_thread.start()
         check_threads.append(new_thread)
 
-    print(f'Waiting for threads to stop...  ({len(check_threads)})', end='\r')
     while len(check_threads) > 0:
         for t in check_threads:
             if not t.is_alive():
