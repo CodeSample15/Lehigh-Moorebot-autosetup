@@ -1,0 +1,12 @@
+## Instructions:
+
+- Install requirements: `pip install -r requirements.txt`
+- Create network_conf.txt:
+```
+    ssid=WIFI_SSID_HERE  
+    pswd=WIFI_PASSWD_HERE
+```
+- Set NET_MASK of the network you plan to have the robots connected to in netscanner.py
+- Run script: `python3 botsetup.py`
+
+Script will automatically detect connection mode (direct or indirect).
