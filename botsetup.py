@@ -82,6 +82,8 @@ def run_setup(ip, set_wifi=True, verbose=True):
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.MissingHostKeyPolicy())
 
+    success_flag = True # will bet to false if an error occurs
+
     try:
         ssh.connect(ip, 22, username=ROBOT_USERNAME, password=ROBOT_PASSWORD)
         print_conditional(Fore.GREEN + "Connected!", output=verbose)
@@ -220,7 +222,6 @@ def run_setup(ip, set_wifi=True, verbose=True):
         success_flag = False
     
     ssh.close()
-    success_flag = True
 
 def main():
     load_macs() #load mac addresses from disk
