@@ -223,7 +223,7 @@ def run_setup(ip, set_wifi=True, verbose=True):
     
     ssh.close()
 
-def main():
+def main(config_wifi=False):
     load_macs() #load mac addresses from disk
     load_wifi_config() #load 
 
@@ -240,7 +240,7 @@ def main():
         sys.stdout.flush()
 
         # SSH into robot directly
-        run_setup(DIRECT_CONNECTION_IP, verbose=True)
+        run_setup(DIRECT_CONNECTION_IP, set_wifi=config_wifi, verbose=True)
     else:
         #robot not directly connected, search wifi
         print(Fore.CYAN + "INDIRECT MODE:" + Fore.RESET + " Starting network scan...")
@@ -276,9 +276,17 @@ def main():
 
 #only import once everything is initialized (prevents error with circular import)
 import netscanner
+import argparse
+
+parser = argparse.ArgumentParser(
+            prog='Moorebot Setup',
+            description='Sets up the Moorebot robots for lab')
+
+parser.add_argument('-cn', '--config_network', help='Push network configuration to directly connected robot', action='store_true')
 
 if __name__ == '__main__':
-    main()
+    args = parser.parse_args()
+    main(args.config_network)
 
 #reset text color no matter what
 print(Fore.RESET)
