@@ -34,7 +34,7 @@ def load_macs():
 def dump_macs():
     with open('mac_addresses.txt', 'w') as f:
         for name in robot_macs_dict.keys():
-            f.write(f'{name}-{robot_macs_dict[name]}')
+            f.write(f'{name}-{robot_macs_dict[name]}\n')
 
 def wait_for_eof(channel, timeout=5):
     #fix for paramiko eof problem described here: https://github.com/paramiko/paramiko/issues/109
@@ -76,7 +76,7 @@ def load_wifi_config():
     except:
         print(Fore.RED + "Unable to open network configuration file!")
 
-def run_setup(ip, set_wifi=True, verbose=True):
+def run_setup(ip, set_wifi=True, verbose=True, reboot=False):
     global success_flag
 
     ssh = paramiko.SSHClient()
@@ -165,7 +165,9 @@ def run_setup(ip, set_wifi=True, verbose=True):
                     print(Fore.GREEN + 'Done')
 
             print_conditional(Fore.CYAN + 'Config complete. Reboot robot to apply changes', output=verbose)
-            #ssh.exec_command('sudo reboot')
+
+            if reboot:
+                ssh.exec_command('sudo reboot')
         else:
             # do not have root access, fix that
             temp_file_name = "temp_local"
@@ -223,7 +225,7 @@ def run_setup(ip, set_wifi=True, verbose=True):
     
     ssh.close()
 
-def main(config_wifi=False):
+def main(config_wifi=False, reboot=False):
     load_macs() #load mac addresses from disk
     load_wifi_config() #load 
 
@@ -240,7 +242,7 @@ def main(config_wifi=False):
         sys.stdout.flush()
 
         # SSH into robot directly
-        run_setup(DIRECT_CONNECTION_IP, set_wifi=config_wifi, verbose=True)
+        run_setup(DIRECT_CONNECTION_IP, set_wifi=config_wifi, verbose=True, reboot=reboot)
     else:
         #robot not directly connected, search wifi
         print(Fore.CYAN + "INDIRECT MODE:" + Fore.RESET + " Starting network scan...")
@@ -254,7 +256,7 @@ def main(config_wifi=False):
             print(Fore.GREEN + f'Found {len(netscanner.found_ips)} bot(s)!')
 
             for bot in netscanner.found_ips.keys():
-                x = threading.Thread(target=run_setup, args=(netscanner.found_ips[bot], False, False))
+                x = threading.Thread(target=run_setup, args=(netscanner.found_ips[bot], False, False, reboot))
                 x.start()
 
                 num_dots = 0
@@ -283,10 +285,11 @@ parser = argparse.ArgumentParser(
             description='Sets up the Moorebot robots for lab')
 
 parser.add_argument('-cn', '--config_network', help='Push network configuration to directly connected robot', action='store_true')
+parser.add_argument('-r', '--reboot', help='Automatically reboot robot after configuration is completed', action='store_true')
 
 if __name__ == '__main__':
     args = parser.parse_args()
-    main(args.config_network)
+    main(args.config_network, args.reboot)
 
 #reset text color no matter what
 print(Fore.RESET)

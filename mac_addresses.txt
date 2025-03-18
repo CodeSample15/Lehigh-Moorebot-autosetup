@@ -9,3 +9,8 @@ Balin-b8:2d:28:56:87:da
 Dwalin-b8:2d:28:56:91:60
 Fili-d4:9c:dd:ea:fd:9c
 Kili-d4:9c:dd:eb:0c:f6
+Dori-d4:9c:dd:e9:fa:2e
+Nori-d4:9c:dd:ea:dc:8c
+Ori-d4:9c:dd:ea:dc:56
+Oin-d4:9c:dd:e9:b9:da
+Dain-d4:9c:dd:ea:5a:d8
