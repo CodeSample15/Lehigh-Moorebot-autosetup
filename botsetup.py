@@ -13,7 +13,7 @@ init()
 robot_macs_dict = {}
 
 DIRECT_CONNECTION_IP = '10.42.0.1'
-DIRECT_CONNECTION_LOCAL_IP = '10.42.0.124'
+DIRECT_CONNECTION_LOCAL_IP = '10.42.0.'
 
 #for ssh login
 ROBOT_USERNAME = 'linaro'
@@ -238,7 +238,7 @@ def main(config_wifi=False, reboot=False):
 
     # Check to see if connected to robot directly
     ip = socket.gethostbyname(socket.gethostname())
-    if ip == DIRECT_CONNECTION_LOCAL_IP:
+    if ip[0:8] == DIRECT_CONNECTION_LOCAL_IP:
         print(Fore.CYAN + "DIRECT MODE: " + Fore.RESET + " Attempting SSH...   ", end='')
         sys.stdout.flush()
 
