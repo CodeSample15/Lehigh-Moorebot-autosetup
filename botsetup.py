@@ -167,6 +167,7 @@ def run_setup(ip, set_wifi=True, verbose=True, reboot=False):
             print_conditional(Fore.CYAN + 'Config complete. Reboot robot to apply changes', output=verbose)
 
             if reboot:
+                print_conditional(Fore.YELLOW + 'Shutting down robot...', output=verbose)
                 ssh.exec_command('sudo reboot')
         else:
             # do not have root access, fix that
