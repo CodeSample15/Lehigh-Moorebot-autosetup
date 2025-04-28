@@ -76,6 +76,10 @@ def load_wifi_config():
     except:
         print(Fore.RED + "Unable to open network configuration file!")
 
+def get_file_str(filename):
+    with open(filename, 'r') as f:
+        return ''.join(f.readlines())
+
 def run_setup(ip, set_wifi=True, verbose=True, reboot=False):
     global success_flag
 
@@ -100,6 +104,7 @@ def run_setup(ip, set_wifi=True, verbose=True, reboot=False):
             # we do have root access
             # *Hacker voice*: I'm in
             
+
             #remove proxies just in case
             print_conditional(Fore.RESET + 'Removing proxies and protecting device...   ', end='', output=verbose)
             sys.stdout.flush()
@@ -109,6 +114,7 @@ def run_setup(ip, set_wifi=True, verbose=True, reboot=False):
             ssh.exec_command('route add 45.35.33.24 gw 127.0.0.1 lo')
             ssh.exec_command('route add 118.107.244.35 gw 127.0.0.1 lo')
             print_conditional(Fore.GREEN + 'Done', output=verbose)
+
 
             #get mac address
             print_conditional(Fore.RESET + 'Detecting robot name...   ', end='', output=verbose)
@@ -124,6 +130,7 @@ def run_setup(ip, set_wifi=True, verbose=True, reboot=False):
                     robot_name = name
                     print_conditional(Fore.GREEN + f'{name} found!', output=verbose)
             
+
             #name robot if a new one is found
             if robot_name == '':
                 robot_name = input(Fore.YELLOW + 'New robot detected. Enter name: ')
@@ -144,11 +151,13 @@ def run_setup(ip, set_wifi=True, verbose=True, reboot=False):
 
             file_contents[3] = f'ssid={robot_name}\n'
             new_file_str = ''.join(file_contents)
+
             #write to remote
             _, std_out, std_err = ssh.exec_command(f'echo "{new_file_str}" | sudo tee /etc/hostapd/hostapd.conf')
             wait_for_eof(std_out)
             wait_for_eof(std_err)
             print_conditional(Fore.GREEN + 'Done', output=verbose)
+
 
             #give robot access to local network
             if set_wifi:
@@ -162,15 +171,30 @@ def run_setup(ip, set_wifi=True, verbose=True, reboot=False):
                     _, std_out, std_err = ssh.exec_command(f'echo "{wifi_info_str}" | sudo tee /var/roller_eye/config/wifi')
                     wait_for_eof(std_out)
                     wait_for_eof(std_err)
-                    print(Fore.GREEN + 'Done')
+                    print_conditional(Fore.GREEN + 'Done', output=verbose)
+
+
+            #push scripts out to robot
+            print_conditional(Fore.RESET + 'Pushing scripts to robot...   ', end='', output=verbose)
+
+            _, std_out, std_err = ssh.exec_command('sudo chmod 777 /home/linaro')
+            wait_for_eof(std_out)
+            wait_for_eof(std_err)
+
+            sftp_file_transaction(ip, '/home/linaro/ip_server.py', 'robot_scripts/ip_server.py', False)
+
+            print_conditional(Fore.GREEN + 'Done', output=verbose)
+
+
+            #config robot to run scripts
+
 
             print_conditional(Fore.CYAN + 'Config complete. Reboot robot to apply changes', output=verbose)
-
             if reboot:
                 print_conditional(Fore.YELLOW + 'Shutting down robot...', output=verbose)
                 ssh.exec_command('sudo reboot')
         else:
-            # do not have root access, fix that
+            # we do not have root access, fix that
             temp_file_name = "temp_local"
             remote_file_name = "/etc/rc.local"
             sftp_file_transaction(DIRECT_CONNECTION_IP, remote_file_name, temp_file_name) #fetch remote rc.local file
