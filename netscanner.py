@@ -33,7 +33,7 @@ def check_ip(ip):
     except:
         pass #ignore, just keep on scannin
 
-def scan():
+def scan(print_ips=False):
     load_macs()
 
     ip_addr = socket.gethostbyname(socket.gethostname())
@@ -52,5 +52,8 @@ def scan():
         print(f'Waiting for threads to stop...  ({len(check_threads)})', end='\r')
     print("Done" + " "*100)
 
+    if(print_ips):
+        print(found_ips)
+
 if __name__ == '__main__':
-    scan() #for debugging purposes
+    scan(print_ips=True)
