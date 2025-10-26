@@ -2,6 +2,7 @@ import ipaddress
 import socket
 import paramiko
 import threading
+import pprint
 
 from botsetup import robot_macs_dict, load_macs, wait_for_eof, ROBOT_USERNAME, ROBOT_PASSWORD
 
@@ -53,7 +54,7 @@ def scan(print_ips=False):
     print("Done" + " "*100)
 
     if(print_ips):
-        print(found_ips)
+        pprint.pp(found_ips)
 
 if __name__ == '__main__':
     scan(print_ips=True)
